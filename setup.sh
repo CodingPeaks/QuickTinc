@@ -1,11 +1,11 @@
 #!/bin/bash
 
 echo "
-     ____        _      __  _______
+     ____        _      __  _______           
     / __ \__  __(_)____/ /_/_  __(_)___  _____
    / / / / / / / / ___/ //_// / / / __ \/ ___/
-  / /_/ / /_/ / / /__/ ,<  / / / / / / / /__
-  \___\_\__,_/_/\___/_/|_|/_/ /_/_/ /_/\___/
+  / /_/ / /_/ / / /__/ ,<  / / / / / / / /__  
+  \___\_\__,_/_/\___/_/|_|/_/ /_/_/ /_/\___/  
                                             "
 echo -ne "      Tinc MESH Automated Setup Script\n\n"
 echo -ne "-----------------------------------------------\n\n"
@@ -15,18 +15,29 @@ echo "Setting up Tinc VPN network: $NETNAME"
 echo "Gathering local host information..."
 read -p "Local host name: " local_name
 read -p "Local SSH IP address: " local_ssh_ip
-read -p "Local Tinc IP address [CIDR notation]: " local_tinc_ip
+read -p "Local Tinc IP address [CIDR notation]: " local_tinc_ip_cidr
 read -p "How many remote hosts will join this network? " n
+
+local_tinc_ip="${local_tinc_ip_cidr%/*}"
+local_tinc_subnet="${local_tinc_ip_cidr#*/}"
+
 declare -A hosts_ip
 declare -A tinc_ip
+declare -A tinc_subnet
+
 hosts_ip[$local_name]=$local_ssh_ip
 tinc_ip[$local_name]=$local_tinc_ip
+tinc_subnet[$local_name]=$local_tinc_subnet
+
 for ((i=1; i<=n; i++)); do
   read -p "Remote host $i name: " name
   read -p "Remote SSH IP for $name: " ip
   read -p "Remote Tinc IP [CIDR notation] for $name: " tip
+  local_tinc_ip="${tip%/*}"
+  local_tinc_subnet="${tip#*/}"
   hosts_ip[$name]=$ip
-  tinc_ip[$name]=$tip
+  tinc_ip[$name]="$local_tinc_ip"
+  tinc_subnet[$name]=$local_tinc_subnet
 done
 echo "Installing Tinc and SSH client locally..."
 apt-get update -qq && apt-get install -y -qq tinc openssh-client
@@ -40,12 +51,13 @@ for name in "${!hosts_ip[@]}"; do
   cat > /etc/tinc/$NETNAME/hosts/$name <<EOF
 Name = $name
 Address = ${hosts_ip[$name]}
-Subnet = ${tinc_ip[$name]}
+Subnet = ${tinc_ip[$name]}/${tinc_subnet[$name]}
 EOF
 done
 # local tinc.conf
 cat > /etc/tinc/$NETNAME/tinc.conf <<EOF
 Name = $local_name
+AddressFamily = ipv4
 Interface = tinc0
 EOF
 # local tinc-up & tinc-down
@@ -78,6 +90,7 @@ for name in "${!hosts_ip[@]}"; do
   # tinc.conf
   cat > /tmp/tinc.conf <<EOF
 Name = $name
+AddressFamily = ipv4
 Interface = tinc0
 ConnectTo = $local_name
 EOF
@@ -98,7 +111,7 @@ EOF
 
   # generate keys on remte host
   echo "Generating Tinc keys on remote host $name..."
-  ssh root@${hosts_ip[$name]} "tincd -n $NETNAME -K4096 <<< yes"
+  ssh root@${hosts_ip[$name]} "tincd -n $NETNAME -K4096 <<< yes > /dev/null 2>&1"
 
   # copy back the updatde host file with the public key from remote to local
   echo "Copying public key from $name back to local host..."
